@@ -1,0 +1,152 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_APP_USER}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
+      MYSQL_MAXWELL_USER: ${MYSQL_MAXWELL_USER}
+      MYSQL_MAXWELL_PASSWORD: ${MYSQL_MAXWELL_PASSWORD}
+      MYSQL_APP_USER: ${MYSQL_APP_USER}
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./conf/mysql/conf.d:/etc/mysql/conf.d
+      - ./conf/mysql/initdb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  solr:
+    image: solr:9.6
+    container_name: solr
+    restart: unless-stopped
+    ports:
+      - "8983:8983"
+    volumes:
+      - ./data/solr:/var/solr
+      - ./conf/solr/scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8983/solr/admin/cores"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+      - ./conf/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./conf/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./conf/rabbitmq/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD", "sh", "-c", "rabbitmq-diagnostics -q status && rabbitmqctl list_exchanges | grep -q db.changes"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  maxwell:
+    image: zendesk/maxwell:v1.41.2
+    container_name: maxwell
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_MAXWELL_USER: ${MYSQL_MAXWELL_USER}
+      MYSQL_MAXWELL_PASSWORD: ${MYSQL_MAXWELL_PASSWORD}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-db.changes}
+    volumes:
+      - ./conf/maxwell/config/entrypoint.sh:/config/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/config/entrypoint.sh"]
+
+  solr-updater:
+    build:
+      context: ./services/solr-updater
+      dockerfile: Dockerfile
+    container_name: solr-updater
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      solr:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_APP_USER}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      SOLR_BASE_URL: http://solr:8983/solr
+      SERVER_PORT: 8080
+      TZ: ${TZ:-UTC}
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  solr-sync:
+    build:
+      context: ./services/solr-sync
+      dockerfile: Dockerfile
+    # Removed container_name to allow scaling with: docker-compose up -d --scale solr-sync=3
+    restart: unless-stopped
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      solr-updater:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-solr.sync.v1}
+      RABBITMQ_PREFETCH: ${RABBITMQ_PREFETCH:-50}  # Increase prefetch for better throughput
+      SOLR_UPDATER_BASE_URL: http://solr-updater:8080
+      SOLR_UPDATER_TIMEOUT: ${SOLR_UPDATER_TIMEOUT:-10000}  # Reduce timeout for faster failures
+      RETRY_LIMIT: ${RETRY_LIMIT:-5}
+      TZ: ${TZ:-UTC}
+      NODE_ENV: production
+
+networks:
+  default:
+    name: solr-sync-network
+
