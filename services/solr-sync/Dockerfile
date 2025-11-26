@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /build
 
@@ -17,7 +17,7 @@ RUN npm ci --omit=dev && \
     npm cache clean --force
 
 # Production stage
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Install PM2 globally and create user
 RUN npm install -g pm2@latest && \
@@ -31,13 +31,14 @@ WORKDIR /app
 COPY --from=builder /build/dist ./dist
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/package*.json ./
-COPY pm2.config.cjs ./
+COPY ecosystem.config.cjs ./
 
-# Set ownership
-RUN chown -R appuser:appuser /app
+# Create logs directory and set ownership
+RUN mkdir -p /app/logs && \
+    chown -R appuser:appuser /app
 
 USER appuser
 
-# Start with PM2
-CMD ["npm", "start"]
+# Start with PM2 in no-daemon mode (keeps logs visible to Docker)
+CMD ["pm2-runtime", "start", "ecosystem.config.cjs"]
 

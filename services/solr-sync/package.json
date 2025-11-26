@@ -6,20 +6,33 @@
   "type": "module",
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "start": "NODE_ENV=production pm2-runtime start pm2.config.cjs",
-    "dev": "tsx src/index.ts"
+    "start": "npm run build && pm2 start ecosystem.config.cjs",
+    "dev": "tsx --env-file=.env.development src/index.ts",
+    "dev:watch": "tsx watch --env-file=.env.development src/index.ts",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "amqplib": "^0.10.4",
     "axios": "^1.7.4",
-    "pino": "^9.4.0",
-    "pm2": "^5.4.2"
+    "pm2": "^5.4.2",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.5",
     "@types/node": "^20.11.30",
-    "tsx": "^4.7.1",
-    "typescript": "^5.6.3"
+    "@typescript-eslint/eslint-plugin": "^8.18.2",
+    "@typescript-eslint/parser": "^8.18.2",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2"
   }
 }
 

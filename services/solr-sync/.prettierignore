@@ -1,0 +1,9 @@
+node_modules
+dist
+logs
+*.cjs
+*.js
+!eslint.config.js
+package-lock.json
+ecosystem.config.cjs
+

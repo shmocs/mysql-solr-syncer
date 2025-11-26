@@ -78,12 +78,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
       MYSQL_MAXWELL_USER: ${MYSQL_MAXWELL_USER}
       MYSQL_MAXWELL_PASSWORD: ${MYSQL_MAXWELL_PASSWORD}
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
       RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
@@ -104,13 +104,13 @@ services:
       solr:
         condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
       MYSQL_USER: ${MYSQL_APP_USER}
       MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
-      SOLR_BASE_URL: http://solr:8983/solr
-      SERVER_PORT: 8080
+      SOLR_BASE_URL: ${SOLR_BASE_URL:-http://solr:8983/solr}
+      SERVER_PORT: ${SOLR_UPDATER_PORT:-8080}
       TZ: ${TZ:-UTC}
     ports:
       - "8081:8080"
@@ -133,14 +133,14 @@ services:
       solr-updater:
         condition: service_healthy
     environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
       RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
       RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-solr.sync.v1}
       RABBITMQ_PREFETCH: ${RABBITMQ_PREFETCH:-50}  # Increase prefetch for better throughput
-      SOLR_UPDATER_BASE_URL: http://solr-updater:8080
+      SOLR_UPDATER_BASE_URL: ${SOLR_UPDATER_BASE_URL:-http://solr-updater:8080}
       SOLR_UPDATER_TIMEOUT: ${SOLR_UPDATER_TIMEOUT:-10000}  # Reduce timeout for faster failures
       RETRY_LIMIT: ${RETRY_LIMIT:-5}
       TZ: ${TZ:-UTC}

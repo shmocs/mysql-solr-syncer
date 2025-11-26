@@ -5,9 +5,9 @@ export interface MaxwellEvent {
   ts: number;
   xid: number;
   commit: boolean;
-  data?: Record<string, any>;
-  old?: Record<string, any>;
-  primary_key?: Array<{ [key: string]: any }>;
+  data?: Record<string, unknown>;
+  old?: Record<string, unknown>;
+  primary_key?: Array<{ [key: string]: unknown }>;
 }
 
 export interface SolrUpdaterRequest {

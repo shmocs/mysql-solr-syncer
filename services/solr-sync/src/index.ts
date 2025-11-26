@@ -2,7 +2,18 @@ import amqp, { ChannelModel, Channel, ConsumeMessage } from 'amqplib';
 import axios from 'axios';
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
-import { MaxwellEvent, isSupportedTable } from './types.js';
+import { MaxwellEvent, SolrUpdaterResponse, isSupportedTable } from './types.js';
+
+function formatError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
+}
 
 const config = loadConfig();
 
@@ -15,59 +26,59 @@ async function processMaxwellEvent(event: MaxwellEvent): Promise<void> {
 
   // Filter only our database and supported tables
   if (database !== 'solr_sync') {
-    logger.debug({ database, table }, 'Skipping event from different database');
+    logger.debug('Skipping event from different database', { database, table });
     return;
   }
 
   if (!isSupportedTable(table)) {
-    logger.debug({ table }, 'Skipping unsupported table');
+    logger.debug('Skipping unsupported table', { table });
     return;
   }
 
   // Only process insert/update events (delete would require different handling)
   if (type !== 'insert' && type !== 'update') {
-    logger.debug({ type, table }, 'Skipping non-insert/update event');
+    logger.debug('Skipping non-insert/update event', { type, table });
     return;
   }
 
   // Extract ID from data
-  const id = data?.id;
-  if (!id) {
-    logger.warn({ table, type, data }, 'Event missing ID field');
+  const id = data?.id as number | undefined;
+  if (!id || typeof id !== 'number') {
+    logger.warn('Event missing ID field', { table, type, data });
     return;
   }
 
-  logger.info({ table, id, type }, 'Processing Maxwell event');
+  logger.info('Processing Maxwell event', { table, id, type });
 
   // Call solr-updater service
   const url = `${config.solrUpdater.baseUrl}/${table}/${id}`;
   
   try {
-    const response = await axios.post(url, {}, {
+    const response = await axios.post<SolrUpdaterResponse>(url, {}, {
       timeout: config.solrUpdater.timeout,
       headers: {
         'Content-Type': 'application/json'
       }
     });
 
-    logger.info(
-      { table, id, status: response.status, data: response.data },
-      'Successfully synced to Solr'
-    );
-  } catch (error: any) {
+    logger.info('Successfully synced to Solr', {
+      table,
+      id,
+      status: response.status,
+      data: response.data,
+    });
+  } catch (error: unknown) {
     if (axios.isAxiosError(error)) {
-      logger.error(
-        {
-          table,
-          id,
-          status: error.response?.status,
-          data: error.response?.data,
-          message: error.message
-        },
-        'Failed to call solr-updater'
-      );
+      const responseData: unknown = error.response?.data;
+      logger.error('Failed to call solr-updater', {
+        table,
+        id,
+        status: error.response?.status,
+        data: responseData,
+        message: error.message,
+      });
     } else {
-      logger.error({ table, id, error }, 'Unexpected error calling solr-updater');
+      logger.error('Unexpected error calling solr-updater', { table, id, error: formatError(error) });
     }
     throw error;
   }
@@ -86,37 +97,38 @@ async function handleMessage(msg: ConsumeMessage): Promise<void> {
   const content = msg.content.toString();
   
   try {
-    const event: MaxwellEvent = JSON.parse(content);
+    const event = JSON.parse(content) as MaxwellEvent;
     
     await processMaxwellEvent(event);
     
     // Successfully processed, acknowledge the message
     channel?.ack(msg);
     
-  } catch (error) {
+  } catch (error: unknown) {
     const retryCount = getRetryCount(msg);
     
-    logger.error(
-      { error, retryCount, limit: config.retry.limit },
-      'Error processing message'
-    );
+    logger.error('Error processing message', {
+      error: formatError(error),
+      retryCount,
+      limit: config.retry.limit,
+    });
 
     if (retryCount >= config.retry.limit) {
       // Max retries exceeded, send to dead letter queue
-      logger.warn({ retryCount }, 'Max retries exceeded, sending to DLQ');
+      logger.warn('Max retries exceeded, sending to DLQ', { retryCount });
       channel?.nack(msg, false, false);
     } else {
       // Republish to retry exchange
-      logger.info({ retryCount }, 'Republishing to retry exchange');
+      logger.info('Republishing to retry exchange', { retryCount });
       
       if (channel) {
-        await channel.publish(
+        channel.publish(
           config.retry.exchange,
           '',
           msg.content,
           {
             persistent: true,
-            headers: msg.properties.headers
+            headers: msg.properties.headers,
           }
         );
         channel.ack(msg);
@@ -136,15 +148,15 @@ async function consume(): Promise<void> {
       if (!msg) {
         return;
       }
-      handleMessage(msg).catch((err) => {
-        logger.error({ err }, 'Unhandled message handler error');
+      handleMessage(msg).catch((err: unknown) => {
+        logger.error('Unhandled message handler error', { error: formatError(err) });
         channel?.nack(msg, false, false);
       });
     },
     { noAck: false }
   );
 
-  logger.info({ queue: config.rabbit.queue }, 'Waiting for messages...');
+  logger.info('Waiting for messages...', { queue: config.rabbit.queue });
 }
 
 async function connect(): Promise<void> {
@@ -159,8 +171,8 @@ async function connect(): Promise<void> {
 
   connection = conn;
 
-  connection.on('error', (err) => {
-    logger.error({ err }, 'RabbitMQ connection error');
+  connection.on('error', (err: unknown) => {
+    logger.error('RabbitMQ connection error', { error: formatError(err) });
   });
 
   connection.on('close', () => {
@@ -193,7 +205,7 @@ async function shutdown(): Promise<void> {
       await channel.close();
     }
   } catch (err) {
-    logger.error({ err }, 'Failed to close AMQP channel');
+    logger.error('Failed to close AMQP channel', { error: formatError(err) });
   }
 
   try {
@@ -201,14 +213,14 @@ async function shutdown(): Promise<void> {
       await connection.close();
     }
   } catch (err) {
-    logger.error({ err }, 'Failed to close AMQP connection');
+    logger.error('Failed to close AMQP connection', { error: formatError(err) });
   }
 
   process.exit(0);
 }
 
 async function start(): Promise<void> {
-  logger.info({ config }, 'Starting solr-sync consumer');
+  logger.info('Starting solr-sync consumer', { config });
   
   await connect();
   await consume();
@@ -217,17 +229,17 @@ async function start(): Promise<void> {
 // Handle shutdown signals
 ['SIGINT', 'SIGTERM'].forEach((signal) => {
   process.on(signal, () => {
-    logger.info({ signal }, 'Received shutdown signal');
-    shutdown().catch((err) => {
-      logger.error({ err }, 'Shutdown error');
+    logger.info('Received shutdown signal', { signal });
+    shutdown().catch((err: unknown) => {
+      logger.error('Shutdown error', { error: formatError(err) });
       process.exit(1);
     });
   });
 });
 
 // Start the application
-start().catch((err) => {
-  logger.error({ err }, 'Fatal error while starting consumer');
+start().catch((err: unknown) => {
+  logger.error('Fatal error while starting consumer', { error: formatError(err) });
   process.exit(1);
 });
 
